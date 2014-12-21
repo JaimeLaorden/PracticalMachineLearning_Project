@@ -1,0 +1,183 @@
+---
+title: "Practical Machine Learning - Project"
+author: "Jaime Laorden"
+date: "Thursday, December 18, 2014"
+output: html_document
+---
+
+<!-- # Databases source:: Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recogniti#on of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation #with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013. Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3MGRd7WU2 -->
+
+#### Tittle: Activity Recognition of Weight Lifting Exercises
+
+### Summary
+This report presents the proccess followed to generate a CART rpart Clssification model for Activity Recognition of Weight Lifting Exercises, with final results obteined after apllying the model into out-sample data set. Cros Validation was use to build diferent Decission trees and lower xvalidation error rate tree was selected.
+
+*Databases source:
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recogniti#on of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation #with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013. 
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3MGRd7WU2
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har
+
+```{r, results='hide', warning=FALSE, message=FALSE}
+
+library(caret); library(rpart); library(xtable); library(psych)
+
+# Working Environment & Data Load
+# setwd(".../EDX & Coursera training/Practical Machine Learning/Project")
+myData <- read.csv("pml-training.csv", sep = ",")
+
+```
+
+#### Clean & Exploratory Analysis
+* Remove all variables with 19216 NA's or "" - 101 Variables removed from 160 to 59
+* Remove 5 Non metrics variables X, user_name, raw_timestamp_part_1 & 2, cvtd_timestamp
+* Need to Remove outliers - row 5373 presents strange values
+* No Near Zero Variance variables - No need to remove addittional variables
+
+```{r, cache=TRUE}
+# Remove all variables with 19216 NA's or "" - 101 Variables removed from 160 to 59
+myDataOpt <- myData[,-which(grepl("19216", summary(myData)[7,]) | 
+                            grepl("19216", summary(myData)[1,]) ,
+                            arr.ind=TRUE)]
+# Remove 5 Non metrics variables X, user_name, raw_timestamp_part_1 & 2, cvtd_timestamp
+myDataOpt <- myDataOpt[,-c(1:5)]
+# Need to Remove outliers - row 5373 presents strange values - we consider an error and remove
+myDataOpt <- myDataOpt[-5373,]
+# No Near Zero Variance variables - No need to remove addittional variables
+nearZeroVar(myDataOpt)
+```
+
+* Correlation Analysis - Identifying variables with > 90% correlation
+
+```{r, cache=TRUE}
+
+matcorr <- abs(cor(myDataOpt[,-54]))
+diag(matcorr) <- 0
+list_var_corr <- which(matcorr > 0.9, arr.ind=TRUE, useNames=FALSE)
+# Correlation table Analysis - Selected variables with > 90% correlation
+corrTable <- data.frame(NULL)
+for (ind in 1:nrow(list_var_corr)) { 
+          corrTable <- rbind(corrTable, 
+                             cbind(colnames(myDataOpt)[list_var_corr[ind,1]], 
+                                    colnames(myDataOpt)[list_var_corr[ind,2]], 
+                                    sprintf("%1.2f%%",
+                                            matcorr[list_var_corr[ind,1], 
+                                                    list_var_corr[ind,2]]*100 )
+                                    ))
+}
+
+colnames(corrTable) <- c("Attribute1", "Attribute2", "Correlation")
+print(corrTable)
+```
+
+##### Graphical Exploration of affected variables.
+
+```{r}
+pairs.panels(myDataOpt[,c(19,20)])
+
+pairs.panels(myDataOpt[,c(2,5,10,11)])
+
+```
+
+Initially, no filter of variables as per high correlation will be done.
+
+#### Classification Model Analysis
+DataSet splitted in 75% training & cv set, 25% testing set  
+
+FIRST ANALYSYS:
+We perform RPART classification on training set & Evaluate results.
+No cross validation aplied.
+PCA analysis done, although reduced acuracy of model. Thus not applied initially.   Details of PCA analysis done on code Rmd file
+
+```{r, cache=TRUE}
+
+set.seed(1234321)
+inTrain=createDataPartition(y=myDataOpt$classe, p=0.75, list=FALSE)
+training <- myDataOpt[inTrain,]
+testing <- myDataOpt[-inTrain,]
+
+set.seed(1234322)
+myFit <- rpart(classe ~ ., data=training, method = "class")
+myFitPred <- predict(myFit, testing, type=c("class"))
+confusionMatrix(myFitPred, testing$classe)
+
+```
+
+```{r, echo=FALSE}
+
+# Using PCA
+# set.seed(1234323)
+# preProcPCA <- preProcess(training[-54], method="pca")
+# PreProcPCA
+# trainingPCA <- predict(preProcPCA, training[-54])
+# testingPCA <- predict(preProcPCA, testing[-54])
+
+# results are substantially less acurate than initial model - Wil not apply PCA
+# myFitPCA <- rpart(training$classe ~ ., data=trainingPCA)
+# myFitPredPCA <- predict(myFitPCA, testingPCA, type=c("class"))
+# confusionMatrix(myFitPredPCA, testing$classe)
+
+```
+  
+As per Results Global Acuracy is close to 70%, but low Sensitivity in class "B"and "C", as well as low "Pos Pred Value" on class D" 
+
+Improvement is required, a second round of analysis was done
+
+##### RPART Analysis with Cross Validaton and different size trees
+SECOND ANALYSYS:
+We then perform RPART classification using xv, 10 folds on training set, exploring different trees as per Complexity Factor and number of splits parameters.
+Rpart function allows this as per "control"" parameter of the function
+
+```{r}
+
+# Applying Cross Validation 10 Folds Directly with rpart model function
+set.seed(1234324)
+myFit <- rpart(classe ~ ., data=training, 
+               method = "class", 
+               control = rpart.control(xval = 10, minbucket = 2, cp = 0) 
+               )
+
+par(mar = c(5,5,5,5))
+plotcp(myFit, minline=TRUE)
+
+```
+
+#####Applying best model obteined into testing set
+Lower cross validation error correspond to last tree, 231 splits
+
+           CP     nsplit  rel error       xerror      xstd
+65 0.0000e+00     231     0.0050318       0.024684    0.0015173
+
+##### Applying best RPART Model into testing Data set
+Confusion Matrix calculated
+
+```{r}
+myFitPred <- predict(myFit, testing, type=c("class"))
+confusionMatrix(myFitPred, testing$classe)
+```
+
+#### Results - Confusion Matrix
+As per Results Global Acuracy is close to 98%, with good results > 95% on all classes for Sensitivity, Specificity and Positive and Negative Prediction Rate.
+
+Confidence Interval is 95% CI : (0.9784, 0.9859)
+
+We will use therefore this model in the prediction phase.
+Other classification algorithms were tested showing lower and similar results.
+
+Additional details on tree graph, as well as crossvalidation done below
+
+```{r}
+par(mar = c(0.1,0.1,3,0.1))
+plot(myFit, uniform=TRUE, 
+      main=paste("RPART TREE"),     
+      branch = 0.3, compress = TRUE)
+text(myFit, use.n=TRUE, all=TRUE, cex=.3)
+printcp(myFit)
+```
+
+
+
+
+
+
